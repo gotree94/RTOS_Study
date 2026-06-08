@@ -5,6 +5,88 @@
 
 ---
 
+## 실습 준비
+
+### ① 파일 복사
+
+| 파일 | 원본 (이 저장소) | 대상 (CubeIDE 프로젝트) |
+|------|----------------|----------------------|
+| `main.h` | `02_Task_Sync/Core/Inc/main.h` | `RTOS_Study/Core/Inc/main.h` |
+| `main.c` | `02_Task_Sync/Core/Src/main.c` | `RTOS_Study/Core/Src/main.c` |
+
+> 💡 기존 파일은 백업(`main.c.bak`) 후 덮어쓰세요.
+
+### ② .ioc 설정 확인
+
+기본 설정은 1단계와 동일합니다. FreeRTOS Config Parameters에서 다음 항목이 활성화되어 있는지 확인하세요:
+
+| 확인 항목 | 필요 조건 | 설정 위치 |
+|----------|----------|----------|
+| `configUSE_MUTEXES` | **ENABLED** (Mutex 예제) | FREERTOS → Config Parameters |
+| `configUSE_COUNTING_SEMAPHORES` | **ENABLED** (Counting Semaphore 예제) | FREERTOS → Config Parameters |
+| `configUSE_QUEUE_SEND_TIMEOUT` | **ENABLED** | FREERTOS → Config Parameters |
+
+### ③ 빌드 및 실행
+
+1. 프로젝트 우클릭 → **Build Project** (Ctrl+B)
+2. **Run** → **Debug** (F11) → ST-LINK로 다운로드
+3. UART 터미널: **115200 baud**
+4. `main.h`에서 실행할 예제만 `1`로 설정 후 빌드
+
+### ④ main.c 코드 구조
+
+```c
+/* 1. includes */
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"    /* Semaphore, Mutex API */
+#include "queue.h"     /* Queue API */
+
+/* 2. 핸들 선언 (전역 변수) */
+SemaphoreHandle_t xBinarySemaphore;     /* Binary Semaphore */
+QueueHandle_t      xDataQueue;          /* 데이터 큐 */
+SemaphoreHandle_t xPrintMutex;          /* printf 보호 Mutex */
+SemaphoreHandle_t xCountingSemaphore;   /* 리소스 풀 */
+
+/* 3. 태스크 함수 선언 */
+void Task_Producer(void *pvParam);
+void Task_Consumer(void *pvParam);
+/* (예제별로 2~4개의 태스크) */
+
+/* 4. main() — 초기화 → 동기화 객체 생성 → 태스크 생성 → 스케줄러 시작 */
+int main(void) {
+    HAL_Init();  SystemClock_Config();
+    MX_GPIO_Init();  MX_USART2_UART_Init();
+
+    /* 동기화 객체 생성 */
+    xBinarySemaphore = xSemaphoreCreateBinary();
+    xDataQueue       = xQueueCreate(5, sizeof(int));
+    xPrintMutex      = xSemaphoreCreateMutex();
+    xCountingSemaphore = xSemaphoreCreateCounting(3, 3);
+
+    /* 태스크 생성 */
+    xTaskCreate(Task_Producer, "Producer", 128, NULL, 1, NULL);
+    xTaskCreate(Task_Consumer, "Consumer", 128, NULL, 1, NULL);
+
+    vTaskStartScheduler();  /* ← 실행 시작 */
+    while (1);
+}
+
+/* 5. 태스크 함수 본문 */
+void Task_Producer(void *pvParam) {
+    while (1) {
+        /* Semaphore Give / Queue Send 등 */
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+```
+
+> `main.h`의 `EXAMPLE_*` 매크로로 4가지 예제 중 하나를 선택합니다.
+> 각 예제는 독립적이므로 한 번에 하나씩 실행하세요.
+
+---
+
 ## 개념 학습
 
 ### 1. 왜 동기화가 필요한가?

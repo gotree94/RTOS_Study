@@ -5,6 +5,89 @@
 
 ---
 
+## 실습 준비
+
+### ① 파일 복사
+
+| 파일 | 원본 (이 저장소) | 대상 (CubeIDE 프로젝트) |
+|------|----------------|----------------------|
+| `main.h` | `01_Task_Basics/Core/Inc/main.h` | `RTOS_Study/Core/Inc/main.h` |
+| `main.c` | `01_Task_Basics/Core/Src/main.c` | `RTOS_Study/Core/Src/main.c` |
+
+> 💡 기존 파일은 백업(`main.c.bak`) 후 덮어쓰세요.  
+> 각 단계마다 프로젝트의 `main.c`/`main.h`를 교체하는 방식입니다.
+
+### ② .ioc 설정 확인
+
+이 단계는 기본 FreeRTOS 설정 외에 특별한 추가 설정이 필요 없습니다.
+다음 항목만 확인하세요:
+
+| 확인 항목 | 설정값 | 설정 위치 (.ioc) |
+|----------|--------|----------------|
+| UART2 | `Asynchronous`, 115200 Baud | Pinout → USART2 → Mode |
+| USART2 NVIC | ✅ ENABLED | Pinout → USART2 → NVIC Settings |
+| LED (LD2) | `PA5`, GPIO_Output | Pinout → PA5 → GPIO_Output |
+| Button (B1) | `PC13`, GPIO_Input | Pinout → PC13 → GPIO_Input (Pull-Up) |
+| FREERTOS | CMSIS_V2 | Middleware → FREERTOS → Interface |
+| `configMAX_PRIORITIES` | **5** | FREERTOS → Config Parameters |
+| `configUSE_PREEMPTION` | **ENABLED** | FREERTOS → Config Parameters |
+
+### ③ 빌드 및 실행
+
+1. 프로젝트 우클릭 → **Build Project** (Ctrl+B)
+2. **Run** → **Debug** (F11) → ST-LINK로 다운로드
+3. UART 터미널(TeraTerm/PuTTY): **115200 baud**, COM 포트 확인
+4. 리셋 후 UART 출력 및 LED 깜빡임 확인
+
+### ④ main.c 코드 구조
+
+이 단계의 `main.c`는 다음과 같은 구조로 되어 있습니다:
+
+```c
+/* 1. includes */
+#include "main.h"          /* GPIO/UART 핀 정의 및 HAL 설정 */
+#include "FreeRTOS.h"      /* FreeRTOS 타입 및 상수 */
+#include "task.h"          /* vTaskDelay, xTaskCreate 등 */
+
+/* 2. 태스크 함수 정의 (실제 실행 로직) */
+void Task_LED1(void *pvParam);     /* PA5 LED 500ms 토글 */
+void Task_LED2(void *pvParam);     /* PA5 LED 1000ms 토글 */
+void Task_ButtonMonitor(void *pvParam); /* PC13 버튼 폴링 → UART 출력 */
+
+/* 3. main() — 시스템 초기화 + 태스크 생성 + 스케줄러 시작 */
+int main(void)
+{
+    HAL_Init();                    /* HAL 라이브러리 초기화 */
+    SystemClock_Config();          /* 72MHz HSE+PLL 설정 */
+    MX_GPIO_Init();                /* GPIO (LED, 버튼) 초기화 */
+    MX_USART2_UART_Init();         /* UART2 115200 초기화 */
+
+    xTaskCreate(Task_LED1, "LED1", 128, NULL, 1, NULL);  /* 우선순위 1 */
+    xTaskCreate(Task_LED2, "LED2", 128, NULL, 1, NULL);  /* 우선순위 1 */
+    xTaskCreate(Task_ButtonMonitor, "BTN", 128, NULL, 2, NULL); /* 우선순위 2 */
+
+    vTaskStartScheduler();         /* ← 스케줄러 시작! 이후로는 RTOS가 제어 */
+
+    while (1);                     /* 도달하지 않음 (스케줄러가 CPU 점유) */
+}
+
+/* 4. 태스크 함수 본문 */
+void Task_LED1(void *pvParam) {
+    while (1) {
+        HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+        vTaskDelay(pdMS_TO_TICKS(500)); /* 500ms Blocked → CPU 양보 */
+    }
+}
+/* ... Task_LED2, Task_ButtonMonitor 동일 패턴 ... */
+```
+
+> **핵심 포인트:** `vTaskStartScheduler()` 호출 이후부터는
+> FreeRTOS 스케줄러가 우선순위에 따라 태스크를 번갈아 실행합니다.
+> `vTaskDelay()`는 단순 지연이 아니라 **CPU를 양보**하여
+> 다른 태스크가 실행될 기회를 만듭니다.
+
+---
+
 ## 개념 학습
 
 ### 1.1 Task란?

@@ -5,6 +5,90 @@
 
 ---
 
+## 실습 준비
+
+### ① 파일 복사
+
+| 파일 | 원본 (이 저장소) | 대상 (CubeIDE 프로젝트) |
+|------|----------------|----------------------|
+| `main.h` | `03_Scheduling_Timers/Core/Inc/main.h` | `RTOS_Study/Core/Inc/main.h` |
+| `main.c` | `03_Scheduling_Timers/Core/Src/main.c` | `RTOS_Study/Core/Src/main.c` |
+
+> 💡 기존 파일은 백업(`main.c.bak`) 후 덮어쓰세요.
+
+### ② .ioc 설정 확인
+
+이 단계에서는 Software Timer를 사용하므로 FreeRTOS 설정에서 Timer Daemon을 활성화해야 합니다:
+
+| 확인 항목 | 필요 조건 | 설정 위치 |
+|----------|----------|----------|
+| `configUSE_TIMERS` | **ENABLED** | FREERTOS → Config Parameters |
+| `configTIMER_TASK_PRIORITY` | **2** | FREERTOS → Config Parameters |
+| `configTIMER_TASK_STACK_DEPTH` | **128** (words) | FREERTOS → Config Parameters |
+| `configUSE_TASK_NOTIFICATIONS` | **ENABLED** (Task Notification 예제) | FREERTOS → Config Parameters |
+
+**Timer Daemon Task**는 FreeRTOS 내부에서 타이머 콜백을 실행하는 전담 태스크입니다. `configUSE_TIMERS=ENABLED`로 설정해야 Software Timer API(`xTimerCreate`, `xTimerStart` 등)를 사용할 수 있습니다.
+
+### ③ 빌드 및 실행
+
+1. **Build Project** (Ctrl+B) → **Debug** (F11)
+2. UART 터미널: **115200 baud**
+3. `main.h`에서 실행할 예제 선택 후 빌드
+
+### ④ main.c 코드 구조
+
+```c
+/* 1. includes */
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "timers.h"     /* Software Timer API */
+#include "semphr.h"     /* Mutex (Priority Inversion 예제) */
+
+/* 2. 핸들 선언 */
+TimerHandle_t xAutoReloadTimer;     /* Auto-reload 타이머 */
+TimerHandle_t xOneShotTimer;        /* One-shot 타이머 */
+TaskHandle_t  xTaskHighHandle;      /* 태스크 핸들 (Suspend/Resume 용) */
+
+/* 3. Timer Callback 함수 */
+void vAutoReloadCallback(TimerHandle_t xTimer);
+void vOneShotCallback(TimerHandle_t xTimer);
+
+/* 4. main() */
+int main(void) {
+    HAL_Init();  SystemClock_Config();
+    MX_GPIO_Init();  MX_USART2_UART_Init();
+
+    /* Software Timer 생성 */
+    xAutoReloadTimer = xTimerCreate("Auto", pdMS_TO_TICKS(2000),
+                                    pdTRUE,         /* Auto-reload */
+                                    NULL, vAutoReloadCallback);
+    xOneShotTimer    = xTimerCreate("OneShot", pdMS_TO_TICKS(5000),
+                                    pdFALSE,        /* One-shot */
+                                    NULL, vOneShotCallback);
+
+    /* 태스크 생성 */
+    xTaskCreate(Task_High, "High", 128, NULL, 3, &xTaskHighHandle);
+    xTaskCreate(Task_Mid,  "Mid",  128, NULL, 2, NULL);
+    xTaskCreate(Task_Low,  "Low",  128, NULL, 1, NULL);
+
+    vTaskStartScheduler();
+    while (1);
+}
+
+/* 5. Timer Callback 본문 (Daemon Task 컨텍스트에서 실행) */
+void vAutoReloadCallback(TimerHandle_t xTimer) {
+    /* 짧게 유지! vTaskDelay() 사용 불가 */
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+}
+```
+
+> **핵심 차이점**: 이 단계부터 `timers.h`를 include하고 Software Timer를 사용합니다.
+> Timer Callback은 **Timer Daemon Task** 컨텍스트에서 실행되므로
+> 내부에서 `vTaskDelay()` 등 blocking API를 호출할 수 없습니다.
+
+---
+
 ## 개념 학습
 
 ### 1. Preemptive Scheduling (선점형 스케줄링)

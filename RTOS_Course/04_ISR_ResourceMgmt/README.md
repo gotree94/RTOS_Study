@@ -5,6 +5,106 @@
 
 ---
 
+## 실습 준비
+
+### ① 파일 복사
+
+| 파일 | 원본 (이 저장소) | 대상 (CubeIDE 프로젝트) |
+|------|----------------|----------------------|
+| `main.h` | `04_ISR_ResourceMgmt/Core/Inc/main.h` | `RTOS_Study/Core/Inc/main.h` |
+| `main.c` | `04_ISR_ResourceMgmt/Core/Src/main.c` | `RTOS_Study/Core/Src/main.c` |
+
+> 💡 기존 파일은 백업(`main.c.bak`) 후 덮어쓰세요.
+
+### ② .ioc 설정 확인
+
+이 단계는 **EXTI 인터럽트**와 **UART RX 인터럽트**를 사용하므로
+일반 설정 외에 추가 NVIC 설정이 필요합니다:
+
+| 확인 항목 | 설정값 | 설정 위치 |
+|----------|--------|----------|
+| PC13 GPIO mode | `EXTI13 (Falling Edge)` | Pinout → PC13 → GPIO Mode |
+| PC13 Pull-up | **Enabled** | Pinout → PC13 → GPIO Pull-up |
+| EXTI line13 NVIC | ✅ **ENABLED** | Pinout → PC13 → NVIC Settings |
+| USART2 NVIC | ✅ **ENABLED** | Pinout → USART2 → NVIC Settings |
+| USART2 Mode | `Asynchronous` | Pinout → USART2 → Mode |
+| `configUSE_TRACE_FACILITY` | **ENABLED** (태스크 정보 출력용) | FREERTOS → Config Parameters |
+| `configCHECK_FOR_STACK_OVERFLOW` | **1** (Method 1) 또는 **2** (Method 2) | FREERTOS → Config Parameters |
+
+**EXTI 설정 경로**: .ioc 파일 → Pinout 탭 → PC13 선택 → GPIO Mode에서 `EXTI13 (Falling Edge)` 선택
+
+### ③ main.c의 추가 코드 (UART RX 인터럽트)
+
+이 단계의 `main.c`는 기존 `MX_USART2_UART_Init()` 뒤에
+UART RX 인터럽트를 시작하는 코드가 추가됩니다:
+
+```c
+/* UART RX 인터럽트로 한 바이트 수신 시작 (HAL 내부에서 자동 재시작) */
+HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+```
+
+그리고 `stm32f1xx_it.c` 또는 `main.c` 하단에
+UART RX 완료 콜백이 구현되어 있습니다:
+
+```c
+/* USART2_IRQHandler → HAL → 이 콜백 호출 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART2) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(xUartRxQueue, &rx_byte, &xHigherPriorityTaskWoken);
+        HAL_UART_Receive_IT(&huart2, &rx_byte, 1);  /* 다음 바이트 수신 */
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+```
+
+> ⚠️ **주의**: `stm32f1xx_it.c`의 `USART2_IRQHandler()` 내부에서
+> `HAL_UART_IRQHandler()`가 자동으로 호출됩니다.
+> 별도 수정 없이 `main.c`에 콜백 함수만 추가하면 됩니다.
+
+### ④ 코드 구조
+
+```c
+/* 1. includes */
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"     /* FromISR API */
+#include "queue.h"      /* FromISR API */
+
+/* 2. 핸들 및 전역 변수 */
+SemaphoreHandle_t xButtonSemaphore;     /* EXTI → Task */
+QueueHandle_t     xUartRxQueue;         /* UART ISR → Task */
+uint8_t           rx_byte;              /* UART 수신 버퍼 */
+
+/* 3. ISR 콜백 (인터럽트 컨텍스트, FromISR API만 사용) */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);  /* EXTI */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart); /* UART RX */
+
+/* 4. main() — 기존 + EXTI 초기화 (MX_GPIO_Init()가 EXTI도 설정) */
+int main(void) {
+    HAL_Init();  SystemClock_Config();
+    MX_GPIO_Init();   /* EXTI 설정 포함 */
+    MX_USART2_UART_Init();
+    HAL_UART_Receive_IT(&huart2, &rx_byte, 1);  /* ← 추가! */
+
+    xButtonSemaphore = xSemaphoreCreateBinary();
+    xUartRxQueue     = xQueueCreate(16, sizeof(uint8_t));
+
+    xTaskCreate(Task_ButtonHandler, "BTN", 128, NULL, 2, NULL);
+    xTaskCreate(Task_UARTProcessor, "UART", 128, NULL, 2, NULL);
+
+    vTaskStartScheduler();
+    while (1);
+}
+```
+
+> **핵심 차이점**: ISR 컨텍스트에서는 `FromISR` 접미사가 있는 API만 사용 가능합니다.
+> `portYIELD_FROM_ISR()`로 ISR 종료 직후 스케줄러가 선점하도록 해야
+> Task가 즉시 실행됩니다.
+
+---
+
 ## 개념 학습
 
 ### 1. RTOS에서의 인터럽트 처리

@@ -5,6 +5,62 @@
 
 ---
 
+## 실습 준비
+
+### ① 파일 복사
+
+| 파일 | 원본 (이 저장소) | 대상 (CubeIDE 프로젝트) |
+|------|----------------|----------------------|
+| `main.h` | `05_RealWorld_App/Core/Inc/main.h` | `RTOS_Study/Core/Inc/main.h` |
+| `main.c` | `05_RealWorld_App/Core/Src/main.c` | `RTOS_Study/Core/Src/main.c` |
+
+> 💡 기존 파일은 백업(`main.c.bak`) 후 덮어쓰세요.
+
+### ② .ioc 설정 확인
+
+이 단계는 1~4단계의 모든 기능을 통합하므로 다음 설정이 모두 필요합니다:
+
+| 확인 항목 | 설정값 | 설정 위치 |
+|----------|--------|----------|
+| UART2 | `Asynchronous`, 115200 Baud | Pinout → USART2 |
+| USART2 NVIC | ✅ **ENABLED** | Pinout → USART2 → NVIC |
+| LED (LD2) | `PA5`, GPIO_Output | Pinout → PA5 |
+| Button (B1) | `PC13`, EXTI13 Falling Edge | Pinout → PC13 |
+| EXTI line13 NVIC | ✅ **ENABLED** | Pinout → PC13 → NVIC |
+| FREERTOS Interface | `CMSIS_V2` | Middleware → FREERTOS |
+| `configUSE_PREEMPTION` | **ENABLED** | FREERTOS → Config Parameters |
+| `configMAX_PRIORITIES` | **5** | FREERTOS → Config Parameters |
+| `configUSE_MUTEXES` | **ENABLED** | FREERTOS → Config Parameters |
+| `configUSE_COUNTING_SEMAPHORES` | **ENABLED** | FREERTOS → Config Parameters |
+| `configUSE_TIMERS` | **ENABLED** (Timer 2개 사용) | FREERTOS → Config Parameters |
+| `configUSE_TASK_NOTIFICATIONS` | **ENABLED** | FREERTOS → Config Parameters |
+| `configUSE_TRACE_FACILITY` | **ENABLED** | FREERTOS → Config Parameters |
+| `configCHECK_FOR_STACK_OVERFLOW` | **2** (Method 2) | FREERTOS → Config Parameters |
+
+### ③ 힙 크기 확인
+
+5단계는 태스크 5개 + Queue 3개 + Timer 2개 + Semaphore/Mutex 등으로
+FreeRTOS 힙 사용량이 증가합니다. CubeIDE 기본 힙(10240 bytes)으로도
+충분하지만, 부족할 경우 `configTOTAL_HEAP_SIZE`를 늘리세요:
+
+```c
+#define configTOTAL_HEAP_SIZE    ((size_t)12288)   /* 필요시 12KB로 증가 */
+```
+
+### ④ 주요 개념별 코드 위치
+
+| 개념 | main.c 내 위치 | 설명 |
+|------|---------------|------|
+| `vTaskDelayUntil()` | `Task_SensorAcq` | 정확한 500ms 주기 유지 |
+| `printf()` Mutex 보호 | `__io_putchar()` 재정의 | 출력 직렬화 (Race Condition 방지) |
+| `xSemaphoreGiveFromISR()` | `HAL_GPIO_EXTI_Callback()` | 버튼 → ButtonCtrl Task |
+| `xQueueSendFromISR()` | `HAL_UART_RxCpltCallback()` | UART → UARTCmd Task |
+| `xTimerReset()` | `Task_SensorAcq` | Watchdog 연장 (태스크 생존 신호) |
+| `xTaskNotifyGive()` | Timer Callback → Logger Task | 경량 깨움 |
+| System State | `g_sysState` (전역 변수) | IDLE / RUNNING / ERROR |
+
+---
+
 ## 시스템 아키텍처
 
 ```
